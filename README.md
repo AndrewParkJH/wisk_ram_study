@@ -1,6 +1,51 @@
 # wisk_ram_study
 
-## Running the pipeline
+## Setup
+
+### 1. Clone with submodules
+
+```bash
+git clone --recurse-submodules <repo-url>
+cd wisk_ram_study
+```
+
+If you already cloned without `--recurse-submodules`:
+
+```bash
+git submodule update --init --recursive
+```
+
+### 2. Create the virtual environment
+
+Requires [uv](https://docs.astral.sh/uv/getting-started/installation/). Python 3.11 recommended.
+
+```bash
+uv venv wisk --python 3.11
+```
+
+Activate:
+
+```bash
+# Windows
+wisk\Scripts\activate
+
+# macOS / Linux
+source wisk/bin/activate
+```
+
+### 3. Install dependencies
+
+```bash
+uv sync --group dev
+```
+
+> **Note:** activating the venv does not install packages. You must run `uv sync` explicitly. Re-run it whenever `pyproject.toml` changes (e.g. after a teammate adds a new dependency).
+
+---
+
+## Running the input data pipeline
+
+Data relies on raw Replica data. For RAM analysis, the demand data is aggregated from disaggregated data in Replica.
 
 ```bash
 python run_pipeline.py \
@@ -52,48 +97,6 @@ data/
         └── ...
 ```
 
-## Setup
-
-### 1. Clone with submodules
-
-```bash
-git clone --recurse-submodules <repo-url>
-cd wisk_ram_study
-```
-
-If you already cloned without `--recurse-submodules`:
-
-```bash
-git submodule update --init --recursive
-```
-
-### 2. Create the virtual environment
-
-Requires [uv](https://docs.astral.sh/uv/getting-started/installation/). Python 3.11 recommended.
-
-```bash
-uv venv wisk --python 3.11
-```
-
-Activate:
-
-```bash
-# Windows
-wisk\Scripts\activate
-
-# macOS / Linux
-source wisk/bin/activate
-```
-
-### 3. Install dependencies
-
-```bash
-uv sync --group dev
-```
-
-> **Note:** activating the venv does not install packages. You must run `uv sync` explicitly. Re-run it whenever `pyproject.toml` changes (e.g. after a teammate adds a new dependency).
-
----
 
 ## Running the pricing optimization
 
