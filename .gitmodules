@@ -1,0 +1,7 @@
+[submodule "external/replica_data_analytics"]
+	path = external/replica_data_analytics
+	url = https://github.com/AndrewParkJH/replica_data_analytics
+[submodule "external/uam_system_model"]
+	path = external/uam_system_model
+	url = https://github.com/caoalbert/uam_system_model
+	branch = vertiport_capacity
