@@ -1,0 +1,39 @@
+{
+  "output_base_dir": "data/results",
+
+  "optimizer": {
+    "start_hour":       6,
+    "time_resolution":  30,
+    "value_of_time":    32.63,
+    "beta_cost " :      0.0353,
+    "utility_type":     "betas",
+    "optimality_gap":   0.05,
+    "time_limit":       3600
+  },
+
+  "fleet_sweep": {
+    "min":  10,
+    "max":  30,
+    "step":  2
+  },
+  
+  "cost_steps": 11, 
+
+  "seat_configs": [
+    {
+      "num_seats":   4,
+      "cost_per_fh": {"min": 350, "max": 550},
+      "cost_per_fc": {"min": 195, "max": 315}
+    },
+    {
+      "num_seats":   6,
+      "cost_per_fh": {"min": 560, "max": 840},
+      "cost_per_fc": {"min": 340, "max": 530}
+    },
+    {
+      "num_seats":   8,
+      "cost_per_fh": {"min": 910, "max": 1280},
+      "cost_per_fc": {"min": 620, "max": 930}
+    }
+  ]
+}
