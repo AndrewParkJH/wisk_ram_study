@@ -3,10 +3,19 @@ Builds all static and dynamic inputs needed by StarNetwork and PricingOptimizer.
 
 Reads:
   - vertiport config JSON  (vertiports + links)
-  - demand dir             (*_trips.csv files from run_pipeline.py output)
+  - demand dirs            (*_trips.csv files from run_pipeline.py output)
+                           Both directions are loaded automatically:
+                             {base_demand_dir}/{o_city}_{d_city}_{day}/
+                             {base_demand_dir}/{d_city}_{o_city}_{day}/
 
 Returns a NetworkInputs dataclass containing every matrix the optimizer needs,
 derived entirely from config and demand data — no hardcoding.
+
+city_pair format
+----------------
+  "{o_city}_{d_city}_{day}"   e.g. "UFL_Orlando_Thu"
+  Day must be the last token and one of: Thu, Sat
+  o_city and d_city are resolved against the city names in the vertiport config.
 
 Config links format
 -------------------
@@ -28,6 +37,9 @@ from typing import List
 ROOT = Path(__file__).parent
 sys.path.insert(0, str(ROOT / "external" / "replica_data_analytics"))
 
+DEFAULT_DEMAND_BASE = ROOT / "data" / "processed_data" / "demand"
+VALID_DAYS = {"Thu", "Sat"}
+
 
 @dataclass
 class NetworkInputs:
@@ -43,6 +55,10 @@ class NetworkInputs:
     first_or_last_cost: np.ndarray        # (N x N x 24) USD     — from demand CSVs
 
 
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
 def _split_od_stem(stem: str, vp_set: set):
     """
     Split a filename stem like 'NO_UFL' into (origin_id, destination_id)
@@ -57,13 +73,44 @@ def _split_od_stem(stem: str, vp_set: set):
     return None, None
 
 
+def _parse_city_pair(city_pair: str, city_names: set):
+    """
+    Given a city_pair string like "UFL_Orlando_Thu" return (o_city, d_city, day).
+
+    The day is the last token if it is in VALID_DAYS, otherwise raises ValueError.
+    The remaining prefix is split into two known city names by trying every
+    underscore position — the same logic as _split_od_stem.
+    """
+    parts = city_pair.split("_")
+    if parts[-1] not in VALID_DAYS:
+        raise ValueError(
+            f"city_pair '{city_pair}' must end with one of {VALID_DAYS}. "
+            f"Got '{parts[-1]}'."
+        )
+    day = parts[-1]
+    base = "_".join(parts[:-1])          # e.g. "UFL_Orlando"
+
+    base_parts = base.split("_")
+    for i in range(1, len(base_parts)):
+        o = "_".join(base_parts[:i])
+        d = "_".join(base_parts[i:])
+        if o in city_names and d in city_names:
+            return o, d, day
+
+    raise ValueError(
+        f"Cannot split '{base}' into two known city names.\n"
+        f"  Known cities from vertiport config: {sorted(city_names)}\n"
+        f"  Tip: city_pair must be '{{o_city}}_{{d_city}}_{{day}}' where both "
+        f"city names match the 'city' field in the vertiport config."
+    )
+
+
 def _verify(vp_set: set, dist_matrix: np.ndarray, vp_idx: dict, network_files: list):
     """
     Validate that every demand file pair has matching nodes and a non-zero matrix entry.
-    Errors are fatal; zero reverse entries are warnings (needed for repositioning).
+    Errors are fatal.
     """
     errors = []
-    warnings = []
 
     for f, o_vp, d_vp in network_files:
         if o_vp not in vp_set:
@@ -73,14 +120,10 @@ def _verify(vp_set: set, dist_matrix: np.ndarray, vp_idx: dict, network_files: l
         if o_vp in vp_idx and d_vp in vp_idx:
             oi, di = vp_idx[o_vp], vp_idx[d_vp]
             if dist_matrix[oi, di] == 0:
-                errors.append(f"  links.flight_distance_matrix[{o_vp},{d_vp}] is 0 — add distance for {f.name}")
-            if dist_matrix[di, oi] == 0:
-                warnings.append(f"  Reverse entry [{d_vp},{o_vp}] is 0 — repositioning flights will have zero distance cost")
-
-    if warnings:
-        print("[build_network] WARNING:")
-        for w in warnings:
-            print(w)
+                errors.append(
+                    f"  links.flight_distance_matrix[{o_vp},{d_vp}] is 0 "
+                    f"— add distance for {f.name}"
+                )
 
     if errors:
         print("[build_network] ERROR — fix config before running:")
@@ -91,11 +134,29 @@ def _verify(vp_set: set, dist_matrix: np.ndarray, vp_idx: dict, network_files: l
     print(f"[build_network] Verification passed: {len(network_files)} OD pairs matched.")
 
 
-def build_network_inputs(vertiport_config_path: str, demand_dir: str, start_hour: int) -> NetworkInputs:
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+
+def build_network_inputs(
+    vertiport_config_path: str,
+    city_pair: str,
+    start_hour: int,
+    base_demand_dir: str = None,
+) -> NetworkInputs:
+    """
+    Parameters
+    ----------
+    vertiport_config_path : path to the vertiport JSON config
+    city_pair             : "{o_city}_{d_city}_{day}" e.g. "UFL_Orlando_Thu"
+    start_hour            : ignore demand arriving before this hour
+    base_demand_dir       : root folder containing per-study demand subdirs;
+                            defaults to <repo>/data/processed_data/demand
+    """
     with open(vertiport_config_path) as f:
         config = json.load(f)
 
-    demand_dir = Path(demand_dir)
+    base_demand_dir = Path(base_demand_dir) if base_demand_dir else DEFAULT_DEMAND_BASE
 
     # --- Vertiport ordering from links.nodes ---
     links = config.get("links")
@@ -108,8 +169,8 @@ def build_network_inputs(vertiport_config_path: str, demand_dir: str, start_hour
     N = len(vertiport_names)
 
     # --- Static matrices directly from config ---
-    flight_distance_matrix = np.array(links["flight_distance_matrix"], dtype=float)
-    flight_time_matrix     = np.array(links["flight_time_matrix"],     dtype=float)
+    flight_distance_matrix    = np.array(links["flight_distance_matrix"], dtype=float)
+    flight_time_matrix        = np.array(links["flight_time_matrix"],     dtype=float)
     energy_consumption_matrix = np.zeros((N, N))
 
     if flight_distance_matrix.shape != (N, N):
@@ -117,10 +178,33 @@ def build_network_inputs(vertiport_config_path: str, demand_dir: str, start_hour
     if flight_time_matrix.shape != (N, N):
         raise ValueError(f"flight_time_matrix must be {N}x{N}, got {flight_time_matrix.shape}")
 
-    # --- Discover demand files belonging to this network ---
-    all_trip_files = sorted(demand_dir.glob("*_trips.csv"))
-    if not all_trip_files:
-        raise FileNotFoundError(f"No *_trips.csv files found in {demand_dir}")
+    # --- Resolve both demand directories from city_pair ---
+    city_names = {vp["city"] for vp in config["vertiports"]}
+    o_city, d_city, day = _parse_city_pair(city_pair, city_names)
+
+    forward_dir = base_demand_dir / f"{o_city}_{d_city}_{day}"
+    reverse_dir = base_demand_dir / f"{d_city}_{o_city}_{day}"
+
+    demand_dirs = []
+    for d in (forward_dir, reverse_dir):
+        if d.exists():
+            demand_dirs.append(d)
+        else:
+            print(f"[build_network] WARNING: demand directory not found, skipping: {d}")
+
+    if not demand_dirs:
+        raise FileNotFoundError(
+            f"Neither demand directory found for city_pair '{city_pair}':\n"
+            f"  {forward_dir}\n  {reverse_dir}"
+        )
+
+    print(f"[build_network] Loading demand from {len(demand_dirs)} direction(s): "
+          + ", ".join(d.name for d in demand_dirs))
+
+    # --- Discover demand files across both dirs ---
+    all_trip_files = []
+    for d in demand_dirs:
+        all_trip_files.extend(sorted(d.glob("*_trips.csv")))
 
     network_files = []
     for f in all_trip_files:
@@ -131,7 +215,8 @@ def build_network_inputs(vertiport_config_path: str, demand_dir: str, start_hour
 
     if not network_files:
         raise ValueError(
-            f"No demand files in {demand_dir} match vertiports in {vertiport_config_path}.\n"
+            f"No demand files in {[d.name for d in demand_dirs]} match "
+            f"vertiports in {vertiport_config_path}.\n"
             f"  links.nodes: {vertiport_names}\n"
             f"  Files found: {[f.name for f in all_trip_files]}"
         )
@@ -152,16 +237,14 @@ def build_network_inputs(vertiport_config_path: str, demand_dir: str, start_hour
         oi, di = vp_idx[o_vp], vp_idx[d_vp]
 
         # Filter by service start hour (based on when passenger arrives at origin vertiport)
-        # Must parse from string since datetime columns are saved as strings in CSV.
         origin_arrival_hour = pd.to_datetime(
             df["arrival_time_at_origin_vertiport"], errors="coerce"
         ).dt.hour
         df = df[origin_arrival_hour >= start_hour]
 
-        # Hourly demand keyed by origin_vertiport_arrival_hour — this is the hour a
-        # passenger arrives at the vertiport, which is what ScheduleGenerator expects.
+        # Hourly demand keyed by origin_vertiport_arrival_hour.
         # Multiply by 365: ScheduleGenerator internally divides by 365 (treats input
-        # as annual demand), so we scale up to compensate and recover daily ridership.
+        # as annual demand), so we scale up to recover daily ridership.
         hourly = (
             df.groupby("origin_vertiport_arrival_hour")
               .size()
@@ -188,7 +271,7 @@ def build_network_inputs(vertiport_config_path: str, demand_dir: str, start_hour
             first_mile_time[oi, h]         = row["fm_duration"]
             first_or_last_cost[oi, di, h]  = row["fm_fare"] + row["lm_fare"]
 
-        # Last mile indexed by destination vertiport + arrival hour at destination
+        # Last-mile indexed by destination vertiport + arrival hour at destination
         lm_agg = df.groupby("last_hour").agg(
             lm_duration = ("LM_duration_min", "mean")
         ).reset_index()

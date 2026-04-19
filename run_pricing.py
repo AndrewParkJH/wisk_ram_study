@@ -3,115 +3,166 @@ Entry point for the RAM pricing optimization.
 
 Usage:
     python run_pricing.py \\
-        --vertiport_config external/replica_data_analytics/config/vertiport_configuration/UFL.json \\
-        --demand_dir data/processed_data/demand/UFL_Orlando_Thu \\
-        --output_dir data/results/UFL_Orlando_Thu
+        --city_pair        UFL_Orlando_Thu \\
+        --vertiport_config external/replica_data_analytics/config/vertiport_configuration/UFL.json
 
-Optional sweep parameters:
-    --fleet_min 10 --fleet_max 65 --fleet_step 5
-    --casm_min 0.6 --casm_max 1.6 --casm_step 0.1
-    --optimality_gap 0.05
-    --time_limit 3600
+    # override shared optimizer settings (optional):
+    python run_pricing.py ... --optimizer_config configs/optimizer.json
+
+Output structure:
+    data/results/{city_pair}/{num_seats}seats/
+        f{fleet}_p{cost_pct}.csv        <- optimisation results
+        repo_f{fleet}_p{cost_pct}.csv   <- repositioning flights
+
+    cost_pct = 0..100  (percentage along the [min, max] cost range defined per seat config)
+    e.g.  f10_p0.csv  = fleet 10, minimum cost point
+          f10_p50.csv = fleet 10, midpoint cost
+          f10_p100.csv= fleet 10, maximum cost point
+
+Vertiport config supplies (per vertiport, indexed as links.nodes):
+    fato_capacity        — list passed to optimizer
+    middle_mile ovtt_min — used as uam_transition_time
+
+Shared optimizer config (configs/optimizer.json) supplies:
+    optimizer settings, fleet sweep, seat configs, output_base_dir
 """
 
 import sys
+import json
 import argparse
 import numpy as np
 from pathlib import Path
 
 ROOT = Path(__file__).parent
 
-# Make both submodules importable
 sys.path.insert(0, str(ROOT / "external" / "replica_data_analytics"))
 sys.path.insert(0, str(ROOT / "external" / "uam_system_model"))
 
 from uam_system_model.StarNetworkJFK import StarNetwork
-from uam_system_model.Pricing import PricingOptimizer
+from uam_system_model.PricingFH import PricingOptimizer
 from build_network_inputs import build_network_inputs
 
 
+def _load_vertiport_params(vertiport_config_path: str):
+    """
+    Extract optimizer-level parameters from the vertiport config:
+      - uam_transition_time : middle_mile ovtt_min (minutes)
+      - fato_capacity_list  : list of per-vertiport fato_capacity, ordered as links.nodes
+    """
+    with open(vertiport_config_path) as f:
+        vp_cfg = json.load(f)
+
+    # uam_transition_time = middle_mile OVTT
+    segments = vp_cfg["assumptions"]["multimodal_segments"]["option1_ram"]
+    mm_ovtt = next(s["ovtt_min"] for s in segments if s["segment"] == "middle_mile")
+
+    # fato_capacity list ordered by links.nodes
+    node_order = vp_cfg["links"]["nodes"]
+    vp_map = {v["vertiport_id"]: v for v in vp_cfg["vertiports"]}
+    fato_list = [vp_map[vp_id]["fato_capacity"] for vp_id in node_order]
+
+    return mm_ovtt, fato_list
+
+
 def main():
-    parser = argparse.ArgumentParser(description="RAM pricing optimization")
+    parser = argparse.ArgumentParser(description="RAM pricing optimisation")
+    parser.add_argument("--city_pair",        required=True,
+                        help="'{o_city}_{d_city}_{day}' e.g. UFL_Orlando_Thu — "
+                             "both travel directions are loaded automatically")
     parser.add_argument("--vertiport_config", required=True,
-                        help="Path to vertiport config JSON (e.g. external/replica_data_analytics/config/vertiport_configuration/UFL.json)")
-    parser.add_argument("--demand_dir", required=True,
-                        help="Directory containing *_trips.csv demand files")
-    parser.add_argument("--output_dir", required=True,
-                        help="Directory to write optimization results")
-
-    # Sweep parameters
-    parser.add_argument("--fleet_min",  type=int,   default=10)
-    parser.add_argument("--fleet_max",  type=int,   default=65)
-    parser.add_argument("--fleet_step", type=int,   default=5)
-    parser.add_argument("--casm_min",   type=float, default=0.6)
-    parser.add_argument("--casm_max",   type=float, default=1.6)
-    parser.add_argument("--casm_step",  type=float, default=0.1)
-
-    # Optimizer parameters
-    parser.add_argument("--optimality_gap", type=float, default=0.05)
-    parser.add_argument("--time_limit",     type=int,   default=3600)
-    parser.add_argument("--time_resolution",type=int,   default=30)
-    parser.add_argument("--value_of_time",  type=float, default=32.63)
-    parser.add_argument("--num_seats",      type=int,   default=4)
-    parser.add_argument("--fato_capacity",  type=int,   default=10)
-    parser.add_argument("--fixed_cost_per_flight", type=float, default=20.0)
-    parser.add_argument("--uam_transition_time",   type=int,   default=10)
-    parser.add_argument("--utility_type",   default="betas", choices=["betas", "vot"])
-    parser.add_argument("--start_hour",     type=int, default=0,
-                        help="Earliest hour (origin vertiport arrival) to include in demand (default: 0 = no filter)")
-
+                        help="Path to vertiport config JSON (e.g. external/.../UFL.json)")
+    parser.add_argument("--optimizer_config", default="configs/optimizer.json",
+                        help="Shared optimizer config JSON (default: configs/optimizer.json)")
     args = parser.parse_args()
 
-    output_dir = Path(args.output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
+    with open(ROOT / args.optimizer_config) as f:
+        cfg = json.load(f)
 
-    # --- Build all inputs from config + demand files ---
-    inputs = build_network_inputs(args.vertiport_config, args.demand_dir, args.start_hour)
+    opt = cfg["optimizer"]
 
-    # --- Construct network ---
+    # ── Extract per-vertiport params from vertiport config ─────────────────────
+    vp_config_path = str(ROOT / args.vertiport_config)
+    uam_transition_time, fato_capacity = _load_vertiport_params(vp_config_path)
+
+    print(f"[run_pricing] uam_transition_time={uam_transition_time} min  "
+          f"fato_capacity={fato_capacity}")
+
+    # ── Build network inputs once (shared across all sweep iterations) ─────────
+    inputs = build_network_inputs(
+        vertiport_config_path = vp_config_path,
+        city_pair             = args.city_pair,
+        start_hour            = opt["start_hour"],
+    )
+
     network = StarNetwork(
-        vertiport_names          = inputs.vertiport_names,
-        flight_distance_matrix   = inputs.flight_distance_matrix,
-        flight_time_matrix       = inputs.flight_time_matrix,
-        energy_consumption_matrix= inputs.energy_consumption_matrix,
+        vertiport_names           = inputs.vertiport_names,
+        flight_distance_matrix    = inputs.flight_distance_matrix,
+        flight_time_matrix        = inputs.flight_time_matrix,
+        energy_consumption_matrix = inputs.energy_consumption_matrix,
     )
     network.load_demand(inputs.demand_df)
-
     optimizer = PricingOptimizer(StarNetwork=network)
 
-    # --- Sweep ---
-    fleet_sizes  = np.arange(args.fleet_min,  args.fleet_max  + 1, args.fleet_step)
-    casm_values  = np.arange(args.casm_min,   args.casm_max,        args.casm_step)
+    # ── Sweep ranges ───────────────────────────────────────────────────────────
+    fleet_sizes = np.arange(
+        cfg["fleet_sweep"]["min"],
+        cfg["fleet_sweep"]["max"] + 1,
+        cfg["fleet_sweep"]["step"],
+    )
+    cost_steps = cfg.get("cost_steps", 5)
+    pct_values = np.linspace(0, 1, cost_steps)   # 0 = min cost, 1 = max cost
 
-    for f in fleet_sizes:
-        for c in casm_values:
-            print(f"[run_pricing] fleet={f}  casm={c:.2f}")
-            results, repo_flights = optimizer.optimize(
-                time_resolution       = args.time_resolution,
-                num_vehicles          = f,
-                uber_travel_time      = inputs.driving_travel_time,
-                uber_fare             = inputs.driving_cost,
-                first_mile_time       = inputs.first_mile_time,
-                last_mile_time        = inputs.last_mile_time,
-                first_or_last_cost    = inputs.first_or_last_cost,
-                uam_flight_time       = inputs.flight_time_matrix,
-                uam_distance_matrix   = inputs.flight_distance_matrix,
-                optimality_gap        = args.optimality_gap,
-                value_of_time         = args.value_of_time,
-                time_limit            = args.time_limit,
-                uam_transition_time   = args.uam_transition_time,
-                utility_type          = args.utility_type,
-                opex_per_asm          = c,
-                fato_capacity         = args.fato_capacity,
-                num_seats             = args.num_seats,
-                fixed_cost_per_flight = args.fixed_cost_per_flight,
-                verbose               = False,
-            )
-            tag = f"{f}_{round(c * 10)}"
-            results.to_csv(output_dir / f"{tag}.csv", index=False)
-            repo_flights.to_csv(output_dir / f"repo_{tag}.csv", index=False)
+    base_out = ROOT / cfg["output_base_dir"] / args.city_pair
 
-    print(f"[run_pricing] Done. Results written to {output_dir}")
+    # ── Main sweep: seat_config × fleet × cost_percentage ─────────────────────
+    for seat_cfg in cfg["seat_configs"]:
+        num_seats = seat_cfg["num_seats"]
+        fh_min    = seat_cfg["cost_per_fh"]["min"]
+        fh_max    = seat_cfg["cost_per_fh"]["max"]
+        fc_min    = seat_cfg["cost_per_fc"]["min"]
+        fc_max    = seat_cfg["cost_per_fc"]["max"]
+
+        out_dir = base_out / f"{num_seats}seats"
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+        for fleet in fleet_sizes:
+            for pct in pct_values:
+                cost_per_fh = fh_min + pct * (fh_max - fh_min)
+                cost_per_fc = fc_min + pct * (fc_max - fc_min)
+                pct_int     = round(pct * 100)
+                tag         = f"f{int(fleet)}_p{pct_int}"
+
+                print(
+                    f"[run_pricing] seats={num_seats}  fleet={int(fleet)}"
+                    f"  fh={cost_per_fh:.0f}  fc={cost_per_fc:.0f}  (p={pct_int}%)"
+                )
+
+                results, repo_flights = optimizer.optimize(
+                    time_resolution       = opt["time_resolution"],
+                    num_vehicles          = int(fleet),
+                    uber_travel_time      = inputs.driving_travel_time,
+                    uber_fare             = inputs.driving_cost,
+                    first_mile_time       = inputs.first_mile_time,
+                    last_mile_time        = inputs.last_mile_time,
+                    first_and_last_cost   = inputs.first_or_last_cost,
+                    uam_flight_time       = inputs.flight_time_matrix,
+                    uam_distance_matrix   = inputs.flight_distance_matrix,
+                    optimality_gap        = opt["optimality_gap"],
+                    value_of_time         = opt["value_of_time"],
+                    time_limit            = opt["time_limit"],
+                    uam_transition_time   = uam_transition_time,
+                    utility_type          = opt["utility_type"],
+                    cost_per_fh           = cost_per_fh,
+                    cost_per_fc           = cost_per_fc,
+                    fato_capacity         = fato_capacity,
+                    num_seats             = num_seats,
+                    verbose               = False,
+                )
+
+                results.to_csv(out_dir / f"{tag}.csv",       index=False)
+                repo_flights.to_csv(out_dir / f"repo_{tag}.csv", index=False)
+
+    print(f"[run_pricing] Done. Results written to {base_out}")
 
 
 if __name__ == "__main__":

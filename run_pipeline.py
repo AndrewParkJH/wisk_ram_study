@@ -6,7 +6,7 @@ Usage:
         --state Illinois \\
         --o_city Chicago \\
         --d_city UIUC \\
-        --vertiport_config config/vertiport_configuration/UIUC.json
+        --vertiport_config external/replica_data_analytics/config/vertiport_configuration/UIUC.json
 
 Data layout (all paths relative to this file):
     data/replica_data/<state>/<o_city>_<d_city>_<day>.csv   <- raw input (day: Thu or Sat)
@@ -80,7 +80,7 @@ def main():
     output_dir = PROCESSED_DATA_DIR / "demand" / f"{args.o_city}_{args.d_city}_{args.day}"
 
     compute_ram_trip_statistics(
-        veriport_spec_file=args.vertiport_config,
+        veriport_spec_file=str(ROOT / args.vertiport_config),
         o_city=args.o_city,
         d_city=args.d_city,
         state=args.state,
