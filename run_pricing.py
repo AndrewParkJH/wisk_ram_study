@@ -109,32 +109,47 @@ def main():
         cfg["fleet_sweep"]["max"] + 1,
         cfg["fleet_sweep"]["step"],
     )
-    cost_steps = cfg.get("cost_steps", 5)
-    pct_values = np.linspace(0, 1, cost_steps)   # 0 = min cost, 1 = max cost
+    cost_cfg = cfg["cost"]
+    fh_norm  = cost_cfg["normal_cost_per_seat_fh"]
+    fc_norm  = cost_cfg["normal_cost_per_seat_fc"]
+
+    if cost_cfg["use_cost_multiplier"]:
+
+        fh_min   = cost_cfg["cost_multiplier_fh"]["min"]
+        fh_max   = cost_cfg["cost_multiplier_fh"]["max"]
+        n_steps  = int(cost_cfg["cost_step"])   # number of evenly-spaced points
+        pct_values = np.linspace(fh_min, fh_max, n_steps)
+
+    else:
+        pct_values = np.array([1.0])   # 1.0 multiplier → run at normal cost
+                    
 
     base_out = ROOT / cfg["output_base_dir"] / args.city_pair
 
     # ── Main sweep: seat_config × fleet × cost_percentage ─────────────────────
-    for seat_cfg in cfg["seat_configs"]:
-        num_seats = seat_cfg["num_seats"]
-        fh_min    = seat_cfg["cost_per_fh"]["min"]
-        fh_max    = seat_cfg["cost_per_fh"]["max"]
-        fc_min    = seat_cfg["cost_per_fc"]["min"]
-        fc_max    = seat_cfg["cost_per_fc"]["max"]
-
+    for num_seats in cfg["num_seats"]:
         out_dir = base_out / f"{num_seats}seats"
         out_dir.mkdir(parents=True, exist_ok=True)
 
+        # Build a matching fc sweep (separate range or mirror fh)
+        if cost_cfg["use_cost_multiplier"] and not cost_cfg["use_same_multiplier_for_fh_and_fc"]:
+            fc_min   = cost_cfg["cost_multiplier_fc"]["min"]
+            fc_max   = cost_cfg["cost_multiplier_fc"]["max"]
+            fc_pct_values = np.linspace(fc_min, fc_max, int(cost_cfg["cost_step"]))
+        else:
+            fc_pct_values = pct_values  # same sweep for both
+
         for fleet in fleet_sizes:
-            for pct in pct_values:
-                cost_per_fh = fh_min + pct * (fh_max - fh_min)
-                cost_per_fc = fc_min + pct * (fc_max - fc_min)
-                pct_int     = round(pct * 100)
+            for pct_fh, pct_fc in zip(pct_values, fc_pct_values):
+                cost_per_fh = (fh_norm * pct_fh)*num_seats
+                cost_per_fc = (fc_norm * pct_fc)*num_seats
+                pct_int     = round(pct_fh * 100)
                 tag         = f"f{int(fleet)}_p{pct_int}"
 
                 print(
                     f"[run_pricing] seats={num_seats}  fleet={int(fleet)}"
-                    f"  fh={cost_per_fh:.0f}  fc={cost_per_fc:.0f}  (p={pct_int}%)"
+                    f"  fh={cost_per_fh:.0f} (×{pct_fh:.2f})"
+                    f"  fc={cost_per_fc:.0f} (×{pct_fc:.2f})"
                 )
 
                 results, repo_flights = optimizer.optimize(

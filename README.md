@@ -203,21 +203,48 @@ must contain:
 - `links.flight_time_matrix` — N×N flight time matrix (minutes).
 - `links.flight_distance_matrix` — N×N flight distance matrix (miles).
 
-### Visualising results
+### Post-processing and visualising results
+
+`post_processing.py` reads the optimizer output CSVs and produces a 3×2 summary plot
+for each seat-capacity configuration.
 
 ```bash
-python visualize_results.py \
-    --city_pair        UFL_Orlando_Thu \
-    --vertiport_config external/replica_data_analytics/config/vertiport_configuration/UFL.json
+python post_processing.py \
+    --results_dir  data/results/case2_costScalingFrom4Seater \
+    --city_pair    Chicago_UIUC_Thu \
+    --vertiport_config external/replica_data_analytics/config/vertiport_configuration/UIUC.json
 
 # Limit to one seat configuration
-python visualize_results.py \
-    --city_pair        UFL_Orlando_Thu \
+python post_processing.py \
+    --results_dir  data/results/case2_costScalingFrom4Seater \
+    --city_pair    UFL_Orlando_Thu \
     --vertiport_config external/replica_data_analytics/config/vertiport_configuration/UFL.json \
     --seats 4
 ```
 
-Saves one `summary_plot.png` per seat-capacity subdirectory.
+**Arguments:**
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--results_dir` | yes | Base results directory (e.g. `data/results/case2_costScalingFrom4Seater`) |
+| `--city_pair` | yes | City-pair subdirectory to process (e.g. `Chicago_UIUC_Thu`) |
+| `--vertiport_config` | yes | Vertiport config JSON — used to get flight time/distance matrices |
+| `--optimizer_config` | no | Shared optimizer config (default: `configs/optimizer.json`) |
+| `--seats` | no | Process only this seat count; default processes all in `num_seats` list |
+
+**Output:** one `summary_plot.png` per `{num_seats}seats/` subdirectory with 6 panels:
+
+| Panel | Metric |
+|-------|--------|
+| A | Operating Profit (thousand $) |
+| B | Revenue ($) |
+| C | UAM Passengers |
+| D | Load Factor |
+| E | % Repositioning Flights |
+| F | Flights per Aircraft per Day |
+
+Lines are coloured by **cost scaling factor** (×0.40 → ×1.60 relative to the normal
+per-seat operating cost defined in `configs/optimizer.json`). The x-axis is fleet size.
 
 ---
 

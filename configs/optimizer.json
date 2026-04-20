@@ -16,24 +16,16 @@
     "max":  30,
     "step":  2
   },
-  
-  "cost_steps": 11, 
 
-  "seat_configs": [
-    {
-      "num_seats":   4,
-      "cost_per_fh": {"min": 350, "max": 550},
-      "cost_per_fc": {"min": 195, "max": 315}
-    },
-    {
-      "num_seats":   6,
-      "cost_per_fh": {"min": 560, "max": 840},
-      "cost_per_fc": {"min": 340, "max": 530}
-    },
-    {
-      "num_seats":   8,
-      "cost_per_fh": {"min": 910, "max": 1280},
-      "cost_per_fc": {"min": 620, "max": 930}
-    }
-  ]
+  "cost": {
+    "normal_cost_per_seat_fh": 110.0,
+    "normal_cost_per_seat_fc": 60.0,
+    "use_cost_multiplier": 1,
+    "use_same_multiplier_for_fh_and_fc": 1,
+    "cost_multiplier_fh": {"min": 0.4, "max": 1.6},
+    "cost_multiplier_fc": {"min": 0.4, "max": 1.6},
+    "cost_step": 7
+  },
+
+  "num_seats": [4, 6, 8]
 }
