@@ -35,6 +35,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).parent
 
+import os
+parent_dir = os.path.abspath(os.path.join(os.getcwd(), os.pardir))
+sys.path.append(parent_dir)
+
 sys.path.insert(0, str(ROOT / "external" / "replica_data_analytics"))
 sys.path.insert(0, str(ROOT / "external" / "uam_system_model"))
 
@@ -63,13 +67,14 @@ def _load_vertiport_params(vertiport_config_path: str):
 
     return mm_ovtt, fato_list
 
-
 def main():
     parser = argparse.ArgumentParser(description="RAM pricing optimisation")
-    parser.add_argument("--city_pair",        required=True,
+    parser.add_argument("--city_pair",        required=True, 
+                        default="UFL_Orlando_Thu",
                         help="'{o_city}_{d_city}_{day}' e.g. UFL_Orlando_Thu — "
                              "both travel directions are loaded automatically")
-    parser.add_argument("--vertiport_config", required=True,
+    parser.add_argument("--vertiport_config", required=True, 
+                        default="external/replica_data_analytics/config/vertiport_configuration/UFL.json",
                         help="Path to vertiport config JSON (e.g. external/.../UFL.json)")
     parser.add_argument("--optimizer_config", default="configs/optimizer.json",
                         help="Shared optimizer config JSON (default: configs/optimizer.json)")

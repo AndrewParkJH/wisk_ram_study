@@ -22,9 +22,9 @@
     "normal_cost_per_seat_fc": 60.0,
     "use_cost_multiplier": 1,
     "use_same_multiplier_for_fh_and_fc": 1,
-    "cost_multiplier_fh": {"min": 0.4, "max": 1.6},
-    "cost_multiplier_fc": {"min": 0.4, "max": 1.6},
-    "cost_step": 7
+    "cost_multiplier_fh": {"min": 0.4, "max": 1.2},
+    "cost_multiplier_fc": {"min": 0.4, "max": 1.2},
+    "cost_step": 9
   },
 
   "num_seats": [4, 6, 8]
