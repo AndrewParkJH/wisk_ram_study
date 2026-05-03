@@ -2,3 +2,5 @@
 /data/
 .claude/
 .claude_cache/
+.vscode/
+.idea/
